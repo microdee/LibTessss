@@ -1,0 +1,6 @@
+[submodule "src/dependencies/LibTessDotNet"]
+	path = src/dependencies/LibTessDotNet
+	url = https://github.com/speps/LibTessDotNet.git
+[submodule "src/dependencies/vvvvlib"]
+	path = src/dependencies/vvvvlib
+	url = https://github.com/vvvvpm/vvvvlib.git
