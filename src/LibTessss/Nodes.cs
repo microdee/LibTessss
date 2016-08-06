@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using LibTessDotNet;
 using VVVV.PluginInterfaces.V2;
@@ -68,12 +69,22 @@ namespace LibTessss.Nodes
 
         [Input("Winding Rule", DefaultEnumEntry = "EvenOdd", AutoValidate = false)]
         public ISpread<WindingRule> FWinding;
-        
+
+        [Input("Search Neighbors")]
+        public ISpread<bool> FSearchNeighbors;
+        [Input("Neighbor Generating Thread Count", DefaultValue = 4)]
+        public ISpread<int> FSearchNeighborsThreads;
         [Input("Tessellate", IsBang = true)]
         public ISpread<bool> FTess;
 
-        [Output("Output")]
+        [Output("Polygons")]
+        public ISpread<VPolygon> FPolygons;
+        [Output("Vertices")]
         public ISpread<ISpread<Vector2D>> FOut;
+        [Output("Neighbor On Opposite Edge")]
+        public ISpread<ISpread<int>> FNeighbor;
+
+        EventWaitHandle WaitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
 
         public void Evaluate(int SpreadMax)
         {
@@ -82,25 +93,55 @@ namespace LibTessss.Nodes
                 FContours.Sync();
                 FWinding.Sync();
                 FOut.SliceCount = FContours.SliceCount;
+                FPolygons.SliceCount = FContours.SliceCount;
+                FNeighbor.SliceCount = FContours.SliceCount;
                 for (int i = 0; i < FContours.SliceCount; i++)
                 {
                     if (FTess[i])
                     {
-                        var polygon = new VPolygon {
-                            Winding = FWinding[i]
+                        if (FPolygons[i] != null)
+                        {
+                            if(FPolygons[i].SearchingNeighbors) continue;
+                        }
+                        FPolygons[i] = new VPolygon
+                        {
+                            Winding = FWinding[i],
+                            ID = i
                         };
                         for (int j = 0; j < FContours[i].SliceCount; j++)
                         {
                             if(FContours[i][j] != null)
-                                polygon.Contours.Add(FContours[i][j]);
+                                FPolygons[i].Contours.Add(FContours[i][j]);
                         }
-                        polygon.Tessellate();
-                        FOut[i].SliceCount = polygon.Triangles.Length * 3;
-                        for (int j = 0; j < polygon.Triangles.Length; j++)
+                        FPolygons[i].Tessellate();
+                        FOut[i].SliceCount = FPolygons[i].Triangles.Length * 3;
+                        for (int j = 0; j < FPolygons[i].Triangles.Length; j++)
                         {
-                            FOut[i][j * 3 + 0] = polygon[j][0];
-                            FOut[i][j * 3 + 1] = polygon[j][1];
-                            FOut[i][j * 3 + 2] = polygon[j][2];
+                            FOut[i][j * 3 + 0] = FPolygons[i][j][0];
+                            FOut[i][j * 3 + 1] = FPolygons[i][j][1];
+                            FOut[i][j * 3 + 2] = FPolygons[i][j][2];
+                        }
+                        if (FSearchNeighbors[i])
+                        {
+                            FPolygons[i].OnNeighborsFound += (sender, args) =>
+                            {
+                                var polygon = (VPolygon)sender;
+                                FNeighbor[polygon.ID].SliceCount = FOut[polygon.ID].SliceCount;
+                                for (int j = 0; j < polygon.Triangles.Length; j++)
+                                {
+                                    FNeighbor[polygon.ID][j * 3 + 0] = polygon[j].Neighbors[0];
+                                    FNeighbor[polygon.ID][j * 3 + 1] = polygon[j].Neighbors[1];
+                                    FNeighbor[polygon.ID][j * 3 + 2] = polygon[j].Neighbors[2];
+                                }
+                                WaitHandle.Set();
+                            };
+                            FPolygons[i].GenerateNeighborsParallel(FSearchNeighborsThreads[i]);
+                            WaitHandle.WaitOne();
+                        }
+                        else
+                        {
+
+                            FNeighbor[i].SliceCount = 0;
                         }
                     }
                 }
